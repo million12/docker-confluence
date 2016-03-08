@@ -1,0 +1,29 @@
+machine:
+  services:
+    - docker
+  environment:
+    POSTGRES_PASSWORD: mysecretpassword
+    POSTGRES_USER: admin
+    POSTGRES_DB: confluencedb
+
+dependencies:
+  pre:
+    - docker pull postgres
+    - docker pull busybox:latest
+  post:
+    - docker build -t million12/confluence .
+
+test:
+  override:
+    - docker run -d --name confluence-db -e POSTGRES_PASSWORD=$POSTGRES_PASSWORD -e POSTGRES_USER=$POSTGRES_USER -e POSTGRES_DB=$POSTGRES_DB postgres
+    - docker logs -f confluence-db | tee -a ${CIRCLE_ARTIFACTS}/confluence-db.log:
+        background: true
+    - while true; do if grep "database system is ready to accept connections" -a ${CIRCLE_ARTIFACTS}/confluence-db.log; then break; else sleep 1; fi done
+    # After PostgreSQL starts run jira
+    - docker run -d --name confluence --link confluence-db:confluence.db -e DB_ADDRESS=confluence.db -e DB_NAME=$POSTGRES_DB -p 80:8090 million12/confluence
+    - docker logs -f confluence | tee -a ${CIRCLE_ARTIFACTS}/confluence.log:
+        background: true
+    - while true; do if grep "org.apache.catalina.startup.Catalina.load Initialization processed in" -a ${CIRCLE_ARTIFACTS}/confluence.log; then break; else sleep 1; fi done
+    - sleep 3
+    # Check if web-interface accessible
+    - curl -s -L --head http://127.0.0.1/ | grep "HTTP/1.1 200 OK"
